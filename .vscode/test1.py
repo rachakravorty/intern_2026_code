@@ -18,6 +18,9 @@ class EthernetTestFixtureGUI:
 
         self.relay_names = ["ST1", "ST2", "ST3", "ST4", "DT", "DT1", "DT2"]
         self.relay_indicators = {}
+        self.relay_buttons = {}
+        self.relay_status = [True, False, True, False, True, False, True]
+        self.relay_index = {name: idx for idx, name in enumerate(self.relay_names)}
 
         self.create_widgets()
         self.refresh_ports()
@@ -40,14 +43,14 @@ class EthernetTestFixtureGUI:
         cmd_frame = ttk.LabelFrame(self.root, text=" Automated Test Modes ", padding=10)
         cmd_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Button(cmd_frame, text="Normal Passthrough", command=lambda: self.send_command("normal")).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        ttk.Button(cmd_frame, text="Swap Polarity (IOP_18)", command=lambda: self.send_command("swap-polarity")).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        ttk.Button(cmd_frame, text="Inject Open Circuit (IOP_32)", command=lambda: self.send_command("fault-open")).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-        ttk.Button(cmd_frame, text="Inject Short Circuit (IOP_33)", command=lambda: self.send_command("fault-short")).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Button(cmd_frame, text="Normal Passthrough", command=self.apply_normal_passthrough).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(cmd_frame, text="Swap Polarity (IOP_18)", command=self.apply_swap_polarity).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Button(cmd_frame, text="Inject Open Circuit (IOP_32)", command=self.apply_inverted_circuit).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(cmd_frame, text="Inject Short Circuit (IOP_33)", command=self.apply_short_circuit).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
         # Routing Toggle
-        ttk.Button(cmd_frame, text="Enable DT Routing (HIGH)", command=lambda: self.send_command("set-routing 1")).grid(row=2, column=0, padx=5, pady=5, sticky="ew")
-        ttk.Button(cmd_frame, text="Disable DT Routing (LOW)", command=lambda: self.send_command("set-routing 0")).grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Button(cmd_frame, text="Short to GND", command=self.apply_short_to_gnd).grid(row=2, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(cmd_frame, text="Short to 12V", command=self.apply_short_to_12v).grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
         cmd_frame.columnconfigure(0, weight=1)
         cmd_frame.columnconfigure(1, weight=1)
@@ -57,11 +60,20 @@ class EthernetTestFixtureGUI:
         relay_frame.pack(fill="x", padx=10, pady=5)
 
         for idx, r_name in enumerate(self.relay_names):
-            lbl = tk.Label(relay_frame, text=r_name, width=8, relief="ridge", bg="#dddddd", font=("Helvetica", 10, "bold"))
+            lbl = tk.Label(relay_frame, text=r_name, width=8, relief="ridge", bg=self._relay_color(self.relay_status[idx]), fg="white", font=("Helvetica", 10, "bold"))
             lbl.grid(row=0, column=idx, padx=4, pady=5)
             self.relay_indicators[r_name] = lbl
 
-        ttk.Button(relay_frame, text="Query Board Status", command=lambda: self.send_command("status")).grid(row=1, column=0, columnspan=7, pady=8)
+            btn = ttk.Button(
+                relay_frame,
+                text=self._relay_button_text(self.relay_status[idx]),
+                command=lambda r_name=r_name, idx=idx: self.toggle_relay_state(r_name, idx),
+                width=9
+            )
+            btn.grid(row=1, column=idx, padx=4, pady=3)
+            self.relay_buttons[r_name] = btn
+
+        ttk.Button(relay_frame, text="Query Board Status", command=lambda: self.send_command("status")).grid(row=2, column=0, columnspan=7, pady=8)
 
         # Serial Log Console
         log_frame = ttk.LabelFrame(self.root, text=" Serial Console Output ", padding=10)
@@ -115,6 +127,106 @@ class EthernetTestFixtureGUI:
             except Exception as e:
                 self.log(f"Send Error: {e}")
 
+    def _push_state_to_arduino(self):
+        if not self.is_connected or not self.ser:
+            return
+
+        payload = {
+            relay_name: bool(self.relay_status[self.relay_index[relay_name]])
+            for relay_name in self.relay_names
+        }
+        message = json.dumps(payload) + "\n"
+        try:
+            self.ser.write(message.encode('utf-8'))
+            self.log(f">> {message.strip()}")
+        except Exception as e:
+            self.log(f"Send Error: {e}")
+
+    def apply_normal_passthrough(self):
+        confirm = messagebox.askyesno("Confirm Normal Passthrough", "Set ST1, ST2, ST3, and ST4 to ON?")
+        if not confirm:
+            return
+
+        for relay_name in ["ST1", "ST2", "ST3", "ST4"]:
+            idx = self.relay_index[relay_name]
+            self.relay_status[idx] = True
+            self._set_indicator_state(relay_name, True)
+            self._set_button_state(relay_name, True)
+
+        self._push_state_to_arduino()
+        self.log("Normal passthrough applied: ST1-ST4 ON")
+
+    def apply_swap_polarity(self):
+        confirm = messagebox.askyesno("Confirm Swap Polarity", "Invert DT1 and DT2?")
+        if not confirm:
+            return
+
+        for relay_name in ["DT1", "DT2"]:
+            idx = self.relay_index[relay_name]
+            new_state = not self.relay_status[idx]
+            self.relay_status[idx] = new_state
+            self._set_indicator_state(relay_name, new_state)
+            self._set_button_state(relay_name, new_state)
+
+        self._push_state_to_arduino()
+        self.log("Swap polarity applied: DT1 and DT2 inverted")
+
+    def apply_inverted_circuit(self):
+        confirm = messagebox.askyesno("Confirm Open Circuit", "Set ST1, ST2, ST3, and ST4 to OFF?")
+        if not confirm:
+            return
+
+        for relay_name in ["ST1", "ST2", "ST3", "ST4"]:
+            idx = self.relay_index[relay_name]
+            self.relay_status[idx] = False
+            self._set_indicator_state(relay_name, False)
+            self._set_button_state(relay_name, False)
+
+        self._push_state_to_arduino()
+        self.log("Open circuit applied: ST1-ST4 OFF")
+
+    def apply_short_circuit(self):
+        confirm = messagebox.askyesno("Confirm Short Circuit", "Set ST1 and ST2 to ON and ST3 and ST4 to OFF?")
+        if not confirm:
+            return
+
+        for relay_name, state in [("ST1", True), ("ST2", True), ("ST3", False), ("ST4", False)]:
+            idx = self.relay_index[relay_name]
+            self.relay_status[idx] = state
+            self._set_indicator_state(relay_name, state)
+            self._set_button_state(relay_name, state)
+
+        self._push_state_to_arduino()
+        self.log("Short circuit applied: ST1-ST2 ON, ST3-ST4 OFF")
+
+    def apply_short_to_gnd(self):
+        confirm = messagebox.askyesno("Confirm Short to GND", "Set DT to ON?")
+        if not confirm:
+            return
+
+        relay_name = "DT"
+        idx = self.relay_index[relay_name]
+        self.relay_status[idx] = True
+        self._set_indicator_state(relay_name, True)
+        self._set_button_state(relay_name, True)
+
+        self._push_state_to_arduino()
+        self.log("Short to GND applied: DT ON")
+
+    def apply_short_to_12v(self):
+        confirm = messagebox.askyesno("Confirm Short to 12V", "Set DT to OFF?")
+        if not confirm:
+            return
+
+        relay_name = "DT"
+        idx = self.relay_index[relay_name]
+        self.relay_status[idx] = False
+        self._set_indicator_state(relay_name, False)
+        self._set_button_state(relay_name, False)
+
+        self._push_state_to_arduino()
+        self.log("Short to 12V applied: DT OFF")
+
     def read_serial_loop(self):
         while self.is_connected and self.ser and self.ser.is_open:
             try:
@@ -133,17 +245,40 @@ class EthernetTestFixtureGUI:
             except json.JSONDecodeError:
                 pass
 
+    def _relay_color(self, is_on):
+        return "#4CAF50" if is_on else "#F44336"
+
+    def _relay_button_text(self, is_on):
+        return "Turn Off" if is_on else "Turn On"
+
+    def _set_indicator_state(self, r_name, is_on):
+        self.relay_indicators[r_name].config(bg=self._relay_color(is_on), fg="white")
+
+    def _set_button_state(self, r_name, is_on):
+        self.relay_buttons[r_name].config(text=self._relay_button_text(is_on))
+
+    def toggle_relay_state(self, r_name, idx):
+        new_state = not self.relay_status[idx]
+        confirm = messagebox.askyesno("Confirm Relay Change", f"Switch {r_name} to {'ON' if new_state else 'OFF'}?")
+        if confirm:
+            self.relay_status[idx] = new_state
+            self._set_indicator_state(r_name, new_state)
+            self._set_button_state(r_name, new_state)
+            self._push_state_to_arduino()
+            self.log(f"{r_name} set to {'ON' if new_state else 'OFF'}")
+
     def update_indicators(self, data):
         for r_name in self.relay_names:
             if r_name in data:
-                is_active = bool(data[r_name])
-                color = "#4CAF50" if is_active else "#dddddd"
-                fg_color = "white" if is_active else "black"
-                self.relay_indicators[r_name].config(bg=color, fg=fg_color)
+                self.relay_status[self.relay_index[r_name]] = bool(data[r_name])
+                self._set_indicator_state(r_name, self.relay_status[self.relay_index[r_name]])
+                self._set_button_state(r_name, self.relay_status[self.relay_index[r_name]])
 
     def reset_indicators(self):
-        for lbl in self.relay_indicators.values():
-            lbl.config(bg="#dddddd", fg="black")
+        for idx, r_name in enumerate(self.relay_names):
+            self.relay_status[idx] = False
+            self._set_indicator_state(r_name, False)
+            self._set_button_state(r_name, False)
 
     def log(self, text):
         self.log_box.config(state="normal")

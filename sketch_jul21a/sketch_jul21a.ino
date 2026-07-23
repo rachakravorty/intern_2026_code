@@ -2,7 +2,7 @@
 #include <assert.h>
 #include <avr/wdt.h>
 
-#include "SerialCommands.h"
+#include <SerialCommands.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // Usage Flags for Automotive Ethernet Fault Fixture
@@ -36,6 +36,26 @@ const int FIRMWARE_VERSION_MINOR = 1;
 const int FIRMWARE_VERSION_REV   = 0;
 
 #define PIN_COUNT 22
+
+enum RelayName {
+    RELAY_ST1 = 0,
+    RELAY_ST2,
+    RELAY_ST3,
+    RELAY_ST4,
+    RELAY_DT,
+    RELAY_DT1,
+    RELAY_DT2
+};
+
+const int RELAY_OUTPUT_PINS[7] = {
+    3,  // RELAY_ST1
+    5,  // RELAY_ST2
+    6,  // RELAY_ST3
+    7,  // RELAY_ST4
+    8,  // RELAY_DT
+    9,  // RELAY_DT1
+    10  // RELAY_DT2
+};
 
 const pin_config_t DEFAULT_PINS[PIN_COUNT] = {
     /*  0 RX */ { INPUT,  LOW,  0 },
@@ -90,9 +110,9 @@ void set_pins(int pin_count, pin_config_t *pinconfig) {
 }
 
 void sync_aux_outputs() {
-    digitalWrite(8, active[2].value);
-    digitalWrite(9, active[3].value);
-    digitalWrite(10, active[4].value);
+    digitalWrite(RELAY_OUTPUT_PINS[RELAY_DT], active[RELAY_OUTPUT_PINS[RELAY_DT]].value);
+    digitalWrite(RELAY_OUTPUT_PINS[RELAY_DT1], active[RELAY_OUTPUT_PINS[RELAY_DT1]].value);
+    digitalWrite(RELAY_OUTPUT_PINS[RELAY_DT2], active[RELAY_OUTPUT_PINS[RELAY_DT2]].value);
 }
 
 void save_pinconfig(int pin_count, const pin_config_t *pinconfig) {
@@ -128,21 +148,72 @@ int get_int_arg(SerialCommands *sender, const char *caller, const char *argname)
 
 // Print full board state as JSON for Python GUI parsing
 void send_json_status(Stream *serial) {
-    serial->print("{\"ST1\":");  serial->print(active[2].value);
-    serial->print(",\"ST2\":"); serial->print(active[3].value);
-    serial->print(",\"ST3\":"); serial->print(active[4].value);
-    serial->print(",\"ST4\":"); serial->print(active[5].value);
-    serial->print(",\"DT\":");  serial->print(active[6].value);
-    serial->print(",\"DT1\":"); serial->print(active[7].value);
-    serial->print(",\"DT2\":"); serial->print(active[8].value);
+    serial->print("{\"ST1\":");  serial->print(active[RELAY_OUTPUT_PINS[RELAY_ST1]].value);
+    serial->print(",\"ST2\":"); serial->print(active[RELAY_OUTPUT_PINS[RELAY_ST2]].value);
+    serial->print(",\"ST3\":"); serial->print(active[RELAY_OUTPUT_PINS[RELAY_ST3]].value);
+    serial->print(",\"ST4\":"); serial->print(active[RELAY_OUTPUT_PINS[RELAY_ST4]].value);
+    serial->print(",\"DT\":");  serial->print(active[RELAY_OUTPUT_PINS[RELAY_DT]].value);
+    serial->print(",\"DT1\":"); serial->print(active[RELAY_OUTPUT_PINS[RELAY_DT1]].value);
+    serial->print(",\"DT2\":"); serial->print(active[RELAY_OUTPUT_PINS[RELAY_DT2]].value);
     serial->println("}");
 }
 
+void apply_pwm_value(int value, Stream *serial) {
+    int clamped = constrain(value, 0, 255);
+
+    for (int i = 0; i < 3; ++i) {
+        int relay_index = i;
+        int pin = RELAY_OUTPUT_PINS[relay_index];
+        if (active[pin].value == HIGH) {
+            analogWrite(pin, clamped);
+        } else {
+            analogWrite(pin, 0);
+        }
+    }
+
+    if (serial) {
+        serial->print("{\"pwm\":");
+        serial->print(clamped);
+        serial->println("}");
+    }
+}
+
+void apply_binary_string(const char *config_text) {
+    if (strlen(config_text) != 7) {
+        Serial.println("{\"error\":\"invalid_config\"}");
+        return;
+    }
+
+    int pins[7];
+    for (int i = 0; i < 7; ++i) {
+        pins[i] = RELAY_OUTPUT_PINS[i];
+    }
+    for (int i = 0; i < 7; ++i) {
+        if (config_text[i] != '0' && config_text[i] != '1') {
+            Serial.println("{\"error\":\"invalid_config\"}");
+            return;
+        }
+
+        int value = (config_text[i] == '1') ? HIGH : LOW;
+        active[pins[i]].value = value;
+        write_pin(pins[i], value, active);
+    }
+
+    sync_aux_outputs();
+    send_json_status(&Serial);
+}
 
 void cmd_get_status_handler(SerialCommands *sender) {
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_status("status", cmd_get_status_handler);
+
+void cmd_set_pwm_handler(SerialCommands *sender) {
+    int pwm_value = get_int_arg(sender, "set-pwm", "value");
+    if (pwm_value < 0) return;
+    apply_pwm_value(pwm_value, sender->GetSerial());
+}
+SerialCommand cmd_pwm("set-pwm", cmd_set_pwm_handler);
 
 void cmd_set_config_handler(SerialCommands *sender) {
     char *config_text = sender->Next();
@@ -156,7 +227,10 @@ void cmd_set_config_handler(SerialCommands *sender) {
         return;
     }
 
-    int pins[7] = {2, 3, 4, 5, 6, 7, 8};
+    int pins[7];
+    for (int i = 0; i < 7; ++i) {
+        pins[i] = RELAY_OUTPUT_PINS[i];
+    }
     for (int i = 0; i < 7; ++i) {
         if (config_text[i] != '0' && config_text[i] != '1') {
             sender->GetSerial()->println("{\"error\":\"invalid_config\"}");
@@ -174,7 +248,7 @@ void cmd_set_config_handler(SerialCommands *sender) {
 SerialCommand cmd_set_config("set-config", cmd_set_config_handler);
 
 void help(SerialCommands *sender) {
-    sender->GetSerial()->println("Commands: normal, swap-polarity, fault-open, fault-short, set-routing <0|1>, status, set-config <binary>, set-pin <p> <v>, read-pin <p>, reset, version");
+    sender->GetSerial()->println("Commands: normal, swap-polarity, fault-open, fault-short, set-routing <0|1>, status, set-config <binary>, set-pwm <0|255>, set-pin <p> <v>, read-pin <p>, reset, version");
 }
 SerialCommand cmd_help("help", help);
 
@@ -227,9 +301,10 @@ SerialCommand cmd_read_pin("read-pin", read_pin);
 
 // Mode: Passthrough (All relays LOW)
 void mode_normal(SerialCommands *sender) {
-    for (int p = 2; p <= 8; ++p) {
-        active[p].value = LOW;
-        write_pin(p, LOW, active);
+    for (int i = 0; i < 7; ++i) {
+        int pin = RELAY_OUTPUT_PINS[i];
+        active[pin].value = LOW;
+        write_pin(pin, LOW, active);
     }
     sync_aux_outputs();
     send_json_status(sender->GetSerial());
@@ -238,20 +313,20 @@ SerialCommand cmd_normal("normal", mode_normal);
 
 // Mode: Polarity Swapped (DT1 & DT2 HIGH)
 void mode_polarity_swap(SerialCommands *sender) {
-    active[7].value = HIGH;
-    active[8].value = HIGH;
-    write_pin(7, HIGH, active);
-    write_pin(8, HIGH, active);
+    active[RELAY_OUTPUT_PINS[5]].value = HIGH;
+    active[RELAY_OUTPUT_PINS[6]].value = HIGH;
+    write_pin(RELAY_OUTPUT_PINS[5], HIGH, active);
+    write_pin(RELAY_OUTPUT_PINS[6], HIGH, active);
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_polarity("swap-polarity", mode_polarity_swap);
 
 // Mode: Open Circuit Fault (ST3 & ST4 HIGH)
 void mode_fault_open(SerialCommands *sender) {
-    active[4].value = HIGH;
-    active[5].value = HIGH;
-    write_pin(4, HIGH, active);
-    write_pin(5, HIGH, active);
+    active[RELAY_OUTPUT_PINS[2]].value = HIGH;
+    active[RELAY_OUTPUT_PINS[3]].value = HIGH;
+    write_pin(RELAY_OUTPUT_PINS[2], HIGH, active);
+    write_pin(RELAY_OUTPUT_PINS[3], HIGH, active);
     sync_aux_outputs();
     send_json_status(sender->GetSerial());
 }
@@ -259,10 +334,10 @@ SerialCommand cmd_fault_open("fault-open", mode_fault_open);
 
 // Mode: Short Circuit Fault (ST1 & ST2 HIGH)
 void mode_fault_short(SerialCommands *sender) {
-    active[2].value = HIGH;
-    active[3].value = HIGH;
-    write_pin(2, HIGH, active);
-    write_pin(3, HIGH, active);
+    active[RELAY_OUTPUT_PINS[0]].value = HIGH;
+    active[RELAY_OUTPUT_PINS[1]].value = HIGH;
+    write_pin(RELAY_OUTPUT_PINS[0], HIGH, active);
+    write_pin(RELAY_OUTPUT_PINS[1], HIGH, active);
     sync_aux_outputs();
     send_json_status(sender->GetSerial());
 }
@@ -273,8 +348,8 @@ void mode_routing(SerialCommands *sender) {
     int val = get_int_arg(sender, "set-routing", "state");
     if (val < 0) return;
 
-    active[6].value = val ? HIGH : LOW;
-    write_pin(6, active[6].value, active);
+    active[RELAY_OUTPUT_PINS[4]].value = val ? HIGH : LOW;
+    write_pin(RELAY_OUTPUT_PINS[4], active[RELAY_OUTPUT_PINS[4]].value, active);
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_routing("set-routing", mode_routing);
@@ -298,6 +373,7 @@ void setup() {
     serial_commands.AddCommand(&cmd_set_pin);
     serial_commands.AddCommand(&cmd_read_pin);
     serial_commands.AddCommand(&cmd_status);
+    serial_commands.AddCommand(&cmd_pwm);
     serial_commands.AddCommand(&cmd_set_config);
     serial_commands.AddCommand(&cmd_normal);
     serial_commands.AddCommand(&cmd_polarity);
@@ -307,8 +383,8 @@ void setup() {
 
     serial_commands.SetDefaultHandler(&unknown_command);
 
-    Serial.begin(115200);
-    while (!Serial) {}
+    Serial.begin(9600);
+    Serial.println("Fixture ready");
 }
 
 void loop() {

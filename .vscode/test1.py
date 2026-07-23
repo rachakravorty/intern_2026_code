@@ -10,17 +10,20 @@ class EthernetTestFixtureGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Automotive Ethernet Test Fixture Controller")
-        self.root.geometry("620x680")
-        self.root.resizable(False, False)
+        self.root.geometry("620x720")
+        self.root.resizable(True, True)
 
         self.ser = None
         self.is_connected = False
+        self.pwm_value = 0
 
         self.relay_names = ["ST1", "ST2", "ST3", "ST4", "DT", "DT1", "DT2"]
         self.relay_indicators = {}
         self.relay_buttons = {}
         self.relay_status = [True, False, True, False, True, False, True]
         self.relay_index = {name: idx for idx, name in enumerate(self.relay_names)}
+
+        self.pwm_var = tk.IntVar(value=self.pwm_value)
 
         self.create_widgets()
         self.refresh_ports()
@@ -75,6 +78,20 @@ class EthernetTestFixtureGUI:
 
         ttk.Button(relay_frame, text="Query Board Status", command=lambda: self.send_command("status")).grid(row=2, column=0, columnspan=7, pady=8)
 
+        # PWM Output Control
+        pwm_frame = ttk.LabelFrame(self.root, text=" PWM Output Control ", padding=10)
+        pwm_frame.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(pwm_frame, text="PWM / duty cycle for pins 3, 5, and 6:").grid(row=0, column=0, sticky="w")
+        self.pwm_value_label = ttk.Label(pwm_frame, text="0")
+        self.pwm_value_label.grid(row=0, column=1, padx=5, sticky="e")
+
+        self.pwm_slider = ttk.Scale(pwm_frame, from_=0, to=255, orient="horizontal", variable=self.pwm_var, command=self.on_pwm_slider_drag)
+        self.pwm_slider.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
+        self.pwm_slider.bind("<ButtonRelease-1>", lambda event: self.on_pwm_slider_release())
+        self.pwm_slider.bind("<ButtonRelease-3>", lambda event: self.on_pwm_slider_release())
+        pwm_frame.columnconfigure(0, weight=1)
+
         # Serial Log Console
         log_frame = ttk.LabelFrame(self.root, text=" Serial Console Output ", padding=10)
         log_frame.pack(fill="both", expand=True, padx=10, pady=5)
@@ -95,18 +112,20 @@ class EthernetTestFixtureGUI:
                 messagebox.showerror("Error", "No COM port selected.")
                 return
             try:
-                self.ser = serial.Serial(port, 115200, timeout=1)
+                self.ser = serial.Serial(port, 9600, timeout=1)
                 self.is_connected = True
                 self.btn_connect.config(text="Disconnect")
                 self.log("Connected to " + port)
+
+                time.sleep(2)
 
                 # Read worker thread
                 self.reader_thread = threading.Thread(target=self.read_serial_loop, daemon=True)
                 self.reader_thread.start()
 
                 # Query initial board status
-                time.sleep(0.5)
                 self.send_command("status")
+                self.on_pwm_slider_release()
 
             except Exception as e:
                 messagebox.showerror("Connection Error", str(e))
@@ -127,37 +146,47 @@ class EthernetTestFixtureGUI:
             except Exception as e:
                 self.log(f"Send Error: {e}")
 
-    def _push_state_to_arduino(self):
+    def push_state_to_arduino(self):
         if not self.is_connected or not self.ser:
             return
 
-        payload = {
-            relay_name: bool(self.relay_status[self.relay_index[relay_name]])
-            for relay_name in self.relay_names
-        }
-        message = json.dumps(payload) + "\n"
-        try:
-            self.ser.write(message.encode('utf-8'))
-            self.log(f">> {message.strip()}")
-        except Exception as e:
-            self.log(f"Send Error: {e}")
+        message = "set-config "
+        for x in self.relay_status:
+            message += "1" if x else "0"
+        
+        self.send_command(message)
+
+    def on_pwm_slider_drag(self, value):
+        pwm_value = int(float(value))
+        self.pwm_value = pwm_value
+        self.pwm_value_label.config(text=str(pwm_value))
+
+    def on_pwm_slider_release(self):
+        if self.is_connected and self.ser:
+            self.send_command(f"set-pwm {self.pwm_value}")
 
     def apply_normal_passthrough(self):
-        confirm = messagebox.askyesno("Confirm Normal Passthrough", "Set ST1, ST2, ST3, and ST4 to OFF?")
+        confirm = messagebox.askyesno("Confirm Normal Passthrough", "Set ST1 and ST2 to OFF, and ST3 and ST4 to ON?")
         if not confirm:
             return
 
-        for relay_name in ["ST1", "ST2", "ST3", "ST4", "DT", "DT1", "DT2"]:
+        for relay_name in ["ST1", "ST2"]:
             idx = self.relay_index[relay_name]
             self.relay_status[idx] = False
             self._set_indicator_state(relay_name, False)
             self._set_button_state(relay_name, False)
 
-        self._push_state_to_arduino()
-        self.log("Normal passthrough applied: ST1-ST4 OFF")
+        for relay_name in ["ST3", "ST4"]:
+            idx = self.relay_index[relay_name]
+            self.relay_status[idx] = True
+            self._set_indicator_state(relay_name, True)
+            self._set_button_state(relay_name, True)
+
+        self.push_state_to_arduino()
+        self.log("Normal passthrough applied: ST1/ST2 OFF, ST3/ST4 ON")
 
     def apply_swap_polarity(self):
-        confirm = messagebox.askyesno("Confirm Swap Polarity", "Invert DT1 and DT2?")
+        confirm = messagebox.askyesno("Confirm Swap Polarity", "Toggle DT1 and DT2 to their opposite states?")
         if not confirm:
             return
 
@@ -168,31 +197,25 @@ class EthernetTestFixtureGUI:
             self._set_indicator_state(relay_name, new_state)
             self._set_button_state(relay_name, new_state)
 
-        self._push_state_to_arduino()
-        self.log("Swap polarity applied: DT1 and DT2 inverted")
+        self.push_state_to_arduino()
+        self.log("Swap polarity applied: DT1 and DT2 toggled")
 
     def apply_open_circuit(self):
-        confirm = messagebox.askyesno("Confirm Open Circuit", "Set ST1, ST2, ST3, and ST4 to ON?")
+        confirm = messagebox.askyesno("Confirm Open Circuit", "Set ST1, ST2, ST3 and ST4 to OFF?")
         if not confirm:
             return
 
-        for relay_name in ["ST3", "ST4"]:
-            idx = self.relay_index[relay_name]
-            self.relay_status[idx] = True
-            self._set_indicator_state(relay_name, True)
-            self._set_button_state(relay_name, True)
-
-        for relay_name in ["ST1", "ST2"]:
+        for relay_name in ["ST1", "ST2", "ST3", "ST4"]:
             idx = self.relay_index[relay_name]
             self.relay_status[idx] = False
             self._set_indicator_state(relay_name, False)
             self._set_button_state(relay_name, False)
 
-        self._push_state_to_arduino()
-        self.log("Open circuit applied: ST1-ST4 ON")
+        self.push_state_to_arduino()
+        self.log("Open circuit applied: ST1/ST2/ST3/ST4 OFF")
 
     def apply_short_circuit(self):
-        confirm = messagebox.askyesno("Confirm Short Circuit", "Set ST1 and ST2 to OFF and ST3 and ST4 to ON?")
+        confirm = messagebox.askyesno("Confirm Short Circuit", "Set ST1 and ST2 to ON and ST3 and ST4 to OFF?")
         if not confirm:
             return
 
@@ -202,8 +225,8 @@ class EthernetTestFixtureGUI:
             self._set_indicator_state(relay_name, state)
             self._set_button_state(relay_name, state)
 
-        self._push_state_to_arduino()
-        self.log("Short circuit applied: ST1-ST2 OFF, ST3-ST4 ON")
+        self.push_state_to_arduino()
+        self.log("Short circuit applied: ST1/ST2 ON, ST3/ST4 OFF")
 
     def apply_short_to_gnd(self):
         confirm = messagebox.askyesno("Confirm Short to GND", "Set DT to OFF?")
@@ -216,7 +239,7 @@ class EthernetTestFixtureGUI:
         self._set_indicator_state(relay_name, False)
         self._set_button_state(relay_name, False)
 
-        self._push_state_to_arduino()
+        self.push_state_to_arduino()
         self.log("Short to GND applied: DT OFF")
 
     def apply_short_to_12v(self):
@@ -230,7 +253,7 @@ class EthernetTestFixtureGUI:
         self._set_indicator_state(relay_name, True)
         self._set_button_state(relay_name, True)
 
-        self._push_state_to_arduino()
+        self.push_state_to_arduino()
         self.log("Short to 12V applied: DT ON")
 
     def read_serial_loop(self):
@@ -270,7 +293,7 @@ class EthernetTestFixtureGUI:
             self.relay_status[idx] = new_state
             self._set_indicator_state(r_name, new_state)
             self._set_button_state(r_name, new_state)
-            self._push_state_to_arduino()
+            self.push_state_to_arduino()
             self.log(f"{r_name} set to {'ON' if new_state else 'OFF'}")
 
     def update_indicators(self, data):

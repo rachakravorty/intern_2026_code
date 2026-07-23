@@ -46,9 +46,9 @@ const pin_config_t DEFAULT_PINS[PIN_COUNT] = {
     /*  5 D5 */ { OUTPUT, LOW,  USAGE_FAULT_OPEN },    // ST4
     /*  6 D6 */ { OUTPUT, LOW,  USAGE_DT_ROUTING },    // DT
     /*  7 D7 */ { OUTPUT, LOW,  USAGE_POLARITY_SWAP }, // DT1
-    /*  8 D8 */ { OUTPUT, LOW,  USAGE_POLARITY_SWAP }, // DT2
-    /*  9 D9 */ { INPUT,  LOW,  0 },
-    /* 10 D10*/ { INPUT,  LOW,  0 },
+    /*  8 D8 */ { OUTPUT, LOW,  USAGE_POLARITY_SWAP }, // DT2 / ST1 mirror
+    /*  9 D9 */ { OUTPUT, LOW,  0 },
+    /* 10 D10*/ { OUTPUT, LOW,  0 },
     /* 11 D11*/ { INPUT,  LOW,  0 },
     /* 12 D12*/ { INPUT,  LOW,  0 },
     /* 13 D13*/ { INPUT,  LOW,  0 },
@@ -87,6 +87,12 @@ void set_pins(int pin_count, pin_config_t *pinconfig) {
             write_pin(i, pinconfig[i].value, pinconfig);
         }
     }
+}
+
+void sync_aux_outputs() {
+    digitalWrite(8, active[2].value);
+    digitalWrite(9, active[3].value);
+    digitalWrite(10, active[4].value);
 }
 
 void save_pinconfig(int pin_count, const pin_config_t *pinconfig) {
@@ -132,13 +138,43 @@ void send_json_status(Stream *serial) {
     serial->println("}");
 }
 
+
 void cmd_get_status_handler(SerialCommands *sender) {
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_status("status", cmd_get_status_handler);
 
+void cmd_set_config_handler(SerialCommands *sender) {
+    char *config_text = sender->Next();
+    if (!config_text) {
+        sender->GetSerial()->println("{\"error\":\"missing_config\"}");
+        return;
+    }
+
+    if (strlen(config_text) != 7) {
+        sender->GetSerial()->println("{\"error\":\"invalid_config\"}");
+        return;
+    }
+
+    int pins[7] = {2, 3, 4, 5, 6, 7, 8};
+    for (int i = 0; i < 7; ++i) {
+        if (config_text[i] != '0' && config_text[i] != '1') {
+            sender->GetSerial()->println("{\"error\":\"invalid_config\"}");
+            return;
+        }
+
+        int value = (config_text[i] == '1') ? HIGH : LOW;
+        active[pins[i]].value = value;
+        write_pin(pins[i], value, active);
+    }
+
+    sync_aux_outputs();
+    send_json_status(sender->GetSerial());
+}
+SerialCommand cmd_set_config("set-config", cmd_set_config_handler);
+
 void help(SerialCommands *sender) {
-    sender->GetSerial()->println("Commands: normal, swap-polarity, fault-open, fault-short, set-routing <0|1>, status, set-pin <p> <v>, read-pin <p>, reset, version");
+    sender->GetSerial()->println("Commands: normal, swap-polarity, fault-open, fault-short, set-routing <0|1>, status, set-config <binary>, set-pin <p> <v>, read-pin <p>, reset, version");
 }
 SerialCommand cmd_help("help", help);
 
@@ -169,6 +205,10 @@ void set_pin(SerialCommands *sender) {
     active[pin].value = value;
     write_pin(pin, value, active);
 
+    if (pin == 2 || pin == 3 || pin == 4) {
+        sync_aux_outputs();
+    }
+
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_set_pin("set-pin", set_pin);
@@ -191,6 +231,7 @@ void mode_normal(SerialCommands *sender) {
         active[p].value = LOW;
         write_pin(p, LOW, active);
     }
+    sync_aux_outputs();
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_normal("normal", mode_normal);
@@ -211,6 +252,7 @@ void mode_fault_open(SerialCommands *sender) {
     active[5].value = HIGH;
     write_pin(4, HIGH, active);
     write_pin(5, HIGH, active);
+    sync_aux_outputs();
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_fault_open("fault-open", mode_fault_open);
@@ -221,6 +263,7 @@ void mode_fault_short(SerialCommands *sender) {
     active[3].value = HIGH;
     write_pin(2, HIGH, active);
     write_pin(3, HIGH, active);
+    sync_aux_outputs();
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_fault_short("fault-short", mode_fault_short);
@@ -247,6 +290,7 @@ SerialCommands serial_commands(&Serial, command_buffer, BUFFER_SIZE, "\n");
 void setup() {
     read_saved_pinconfig(PIN_COUNT, active);
     set_pins(PIN_COUNT, active);
+    sync_aux_outputs();
 
     serial_commands.AddCommand(&cmd_help);
     serial_commands.AddCommand(&cmd_version);
@@ -254,6 +298,7 @@ void setup() {
     serial_commands.AddCommand(&cmd_set_pin);
     serial_commands.AddCommand(&cmd_read_pin);
     serial_commands.AddCommand(&cmd_status);
+    serial_commands.AddCommand(&cmd_set_config);
     serial_commands.AddCommand(&cmd_normal);
     serial_commands.AddCommand(&cmd_polarity);
     serial_commands.AddCommand(&cmd_fault_open);

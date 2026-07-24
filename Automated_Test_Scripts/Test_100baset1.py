@@ -12,6 +12,7 @@ class TestBench100BASET1:
         self.ser.write(f"{command}\n".encode("utf-8"))
         time.sleep(0.1)
 
+
     # --- MOCKED DUT STATUS (RANDOM 50/50 OUTPUTS) ---
     def get_link_status(self) -> bool:
         """Simulates Link Status with a random 50/50 result."""
@@ -25,6 +26,7 @@ class TestBench100BASET1:
         """Simulates Cable Diagnostics TDR output."""
         fault_type = random.choice(["SHORT", "OPEN", "OK"])
         return {"status": fault_type}
+
 
     # --- TEST CASES ---
     def test_iop_31_baseline(self):

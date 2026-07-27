@@ -30,6 +30,9 @@ class EthernetTestFixtureGUI:
 
         self.relay_names = ["ST1", "ST2", "ST3", "ST4", "DT", "DT1", "DT2"]
         self.relay_indicators = {}
+        self.relay_buttons = {}
+        self.relay_status = [False, False, False, False, False, False, False]
+        self.relay_index = {name: idx for idx, name in enumerate(self.relay_names)}
 
         # Loop Configuration Variables
         self.loop_iters_var = tk.IntVar(value=10)
@@ -117,16 +120,33 @@ class EthernetTestFixtureGUI:
         self.cmd_frame.columnconfigure(0, weight=1)
         self.cmd_frame.columnconfigure(1, weight=1)
 
-        # 4. Relay Status Visualization (Default Off = Red)
+        # 4. Relay Status Visualization & Manual Control
         relay_frame = ttk.LabelFrame(self.root, text=" Live Relay Status Matrix ", padding=10)
         relay_frame.pack(fill="x", padx=10, pady=5)
 
         for idx, r_name in enumerate(self.relay_names):
-            lbl = tk.Label(relay_frame, text=r_name, width=8, relief="ridge", bg="#f44336", fg="white", font=("Helvetica", 10, "bold"))
+            lbl = tk.Label(
+                relay_frame,
+                text=r_name,
+                width=8,
+                relief="ridge",
+                bg=self._relay_color(self.relay_status[idx]),
+                fg="white",
+                font=("Helvetica", 10, "bold")
+            )
             lbl.grid(row=0, column=idx, padx=4, pady=5)
             self.relay_indicators[r_name] = lbl
 
-        ttk.Button(relay_frame, text="Query Board Status", command=lambda: self.send_command("status")).grid(row=1, column=0, columnspan=7, pady=8)
+            btn = ttk.Button(
+                relay_frame,
+                text=self._relay_button_text(self.relay_status[idx]),
+                command=lambda r_name=r_name, idx=idx: self.toggle_relay_state(r_name, idx),
+                width=9
+            )
+            btn.grid(row=1, column=idx, padx=4, pady=3)
+            self.relay_buttons[r_name] = btn
+
+        ttk.Button(relay_frame, text="Query Board Status", command=lambda: self.send_command("status")).grid(row=2, column=0, columnspan=7, pady=8)
 
         # 5. Serial Log Console
         log_frame = ttk.LabelFrame(self.root, text=" Console Output ", padding=10)
@@ -134,6 +154,39 @@ class EthernetTestFixtureGUI:
 
         self.log_box = scrolledtext.ScrolledText(log_frame, height=12, state="disabled", font=("Consolas", 9))
         self.log_box.pack(fill="both", expand=True)
+
+    # --- Relay Helpers ---
+    def _relay_color(self, is_on):
+        return "#4CAF50" if is_on else "#f44336"
+
+    def _relay_button_text(self, is_on):
+        return "Turn Off" if is_on else "Turn On"
+
+    def _set_indicator_state(self, r_name, is_on):
+        self.relay_indicators[r_name].config(bg=self._relay_color(is_on), fg="white")
+
+    def _set_button_state(self, r_name, is_on):
+        self.relay_buttons[r_name].config(text=self._relay_button_text(is_on))
+
+    def toggle_relay_state(self, r_name, idx):
+        new_state = not self.relay_status[idx]
+        confirm = messagebox.askyesno("Confirm Relay Change", f"Switch {r_name} to {'ON' if new_state else 'OFF'}?")
+        if confirm:
+            self.relay_status[idx] = new_state
+            self._set_indicator_state(r_name, new_state)
+            self._set_button_state(r_name, new_state)
+            self.push_state_to_arduino()
+            self.log(f"{r_name} set to {'ON' if new_state else 'OFF'}")
+
+    def push_state_to_arduino(self):
+        if not self.is_connected or not self.ser:
+            return
+
+        message = "set-config "
+        for x in self.relay_status:
+            message += "1" if x else "0"
+        
+        self.send_command(message)
 
     # --- Manual Connection Management ---
     def refresh_ports(self):
@@ -276,17 +329,21 @@ class EthernetTestFixtureGUI:
                 pass
 
     def update_indicators(self, data):
-        """Updates relay status colors: Green (#4CAF50) when active, Red (#f44336) when inactive."""
+        """Updates relay status indicators and toggle buttons from board status."""
         for r_name in self.relay_names:
             if r_name in data:
+                idx = self.relay_index[r_name]
                 is_active = bool(data[r_name])
-                color = "#4CAF50" if is_active else "#f44336"
-                self.relay_indicators[r_name].config(bg=color, fg="white")
+                self.relay_status[idx] = is_active
+                self._set_indicator_state(r_name, is_active)
+                self._set_button_state(r_name, is_active)
 
     def reset_indicators(self):
-        """Resets all relay status indicators back to Off (Red)."""
-        for lbl in self.relay_indicators.values():
-            lbl.config(bg="#f44336", fg="white")
+        """Resets all relay status indicators and buttons back to Off (Red)."""
+        for idx, r_name in enumerate(self.relay_names):
+            self.relay_status[idx] = False
+            self._set_indicator_state(r_name, False)
+            self._set_button_state(r_name, False)
 
     def log(self, text):
         self.log_box.config(state="normal")

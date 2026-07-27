@@ -110,12 +110,12 @@ class EthernetTestFixtureGUI:
         self.cmd_frame = ttk.LabelFrame(self.root, text=" Manual Test Modes ", padding=10)
         self.cmd_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Button(self.cmd_frame, text="Normal Passthrough", command=lambda: self.send_command("normal")).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Swap Polarity (IOP_18)", command=lambda: self.send_command("swap-polarity")).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Inject Open Circuit (IOP_32)", command=lambda: self.send_command("fault-open")).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Inject Short Circuit (IOP_33)", command=lambda: self.send_command("fault-short")).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Enable DT Routing", command=lambda: self.send_command("set-routing 1")).grid(row=2, column=0, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Disable DT Routing", command=lambda: self.send_command("set-routing 0")).grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Normal Passthrough", command=self.apply_normal_passthrough).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Swap Polarity (IOP_18)", command=self.apply_swap_polarity).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Inject Open Circuit (IOP_32)", command=self.apply_open_circuit).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Inject Short Circuit (IOP_33)", command=self.apply_short_circuit).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Enable DT Routing", command=self.apply_enable_dt_routing).grid(row=2, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Disable DT Routing", command=self.apply_disable_dt_routing).grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
         self.cmd_frame.columnconfigure(0, weight=1)
         self.cmd_frame.columnconfigure(1, weight=1)
@@ -154,6 +154,74 @@ class EthernetTestFixtureGUI:
 
         self.log_box = scrolledtext.ScrolledText(log_frame, height=12, state="disabled", font=("Consolas", 9))
         self.log_box.pack(fill="both", expand=True)
+
+    # --- Preset Mode Handlers ---
+    def apply_normal_passthrough(self):
+        for relay_name in ["ST1", "ST2"]:
+            idx = self.relay_index[relay_name]
+            self.relay_status[idx] = False
+            self._set_indicator_state(relay_name, False)
+            self._set_button_state(relay_name, False)
+
+        for relay_name in ["ST3", "ST4"]:
+            idx = self.relay_index[relay_name]
+            self.relay_status[idx] = True
+            self._set_indicator_state(relay_name, True)
+            self._set_button_state(relay_name, True)
+
+        self.push_state_to_arduino()
+        self.log("Normal passthrough applied: ST1/ST2 OFF, ST3/ST4 ON")
+
+    def apply_swap_polarity(self):
+        for relay_name in ["DT1", "DT2"]:
+            idx = self.relay_index[relay_name]
+            new_state = not self.relay_status[idx]
+            self.relay_status[idx] = new_state
+            self._set_indicator_state(relay_name, new_state)
+            self._set_button_state(relay_name, new_state)
+
+        self.push_state_to_arduino()
+        self.log("Swap polarity applied: DT1 and DT2 toggled")
+
+    def apply_open_circuit(self):
+        for relay_name in ["ST1", "ST2", "ST3", "ST4"]:
+            idx = self.relay_index[relay_name]
+            self.relay_status[idx] = False
+            self._set_indicator_state(relay_name, False)
+            self._set_button_state(relay_name, False)
+
+        self.push_state_to_arduino()
+        self.log("Open circuit applied: ST1/ST2/ST3/ST4 OFF")
+
+    def apply_short_circuit(self):
+        for relay_name, state in [("ST1", True), ("ST2", True), ("ST3", False), ("ST4", False)]:
+            idx = self.relay_index[relay_name]
+            self.relay_status[idx] = state
+            self._set_indicator_state(relay_name, state)
+            self._set_button_state(relay_name, state)
+
+        self.push_state_to_arduino()
+        self.log("Short circuit applied: ST1/ST2 ON, ST3/ST4 OFF")
+
+    def apply_enable_dt_routing(self):
+        relay_name = "DT"
+        idx = self.relay_index[relay_name]
+        self.relay_status[idx] = True
+        self._set_indicator_state(relay_name, True)
+        self._set_button_state(relay_name, True)
+
+        self.push_state_to_arduino()
+        self.log("Enable DT Routing applied: DT ON")
+
+    def apply_disable_dt_routing(self):
+        relay_name = "DT"
+        idx = self.relay_index[relay_name]
+        self.relay_status[idx] = False
+        self._set_indicator_state(relay_name, False)
+        self._set_button_state(relay_name, False)
+
+        self.push_state_to_arduino()
+        self.log("Disable DT Routing applied: DT OFF")
 
     # --- Relay Helpers ---
     def _relay_color(self, is_on):

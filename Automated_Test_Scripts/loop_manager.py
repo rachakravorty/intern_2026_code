@@ -1,7 +1,7 @@
 import time
 import threading
 from dataclasses import dataclass, field
-from typing import Dict, List, Callable, Optional
+from typing import Dict, List, Callable, Optional, Tuple
 
 from .arduino_driver import ArduinoDriver
 from .mdio_driver import MDIODriver
@@ -97,74 +97,106 @@ class LoopManager:
         return self._is_running
 
     def _run_loop_process(self, config: LoopConfig):
-        stats = TestStatistics(total_cycles_planned=config.iterations, start_time=time.time())
+        suite_map = self._build_suite_map(config)
+        total_enabled_standards = len(suite_map)
+        
+        # Calculate total cycles across all enabled standards sequentially
+        total_cycles_planned = total_enabled_standards * config.iterations
+        stats = TestStatistics(total_cycles_planned=total_cycles_planned, start_time=time.time())
 
-        for cycle in range(1, config.iterations + 1):
+        overall_cycle_counter = 0
+
+        # Outer Loop: Run sequentially through each enabled Ethernet standard
+        for suite_name, test_methods in suite_map:
             if self._stop_requested:
                 break
 
-            stats.current_cycle = cycle
-            cycle_failed = False
-            tests_to_run = self._build_execution_list(config)
+            self._log(f"=== Starting Test Block: {suite_name} ({config.iterations} iterations) ===")
 
-            for suite_name, test_name, test_method in tests_to_run:
+            # Inner Loop: Repeat tests for the active standard for all requested iterations
+            for cycle_in_suite in range(1, config.iterations + 1):
                 if self._stop_requested:
                     break
 
-                stats.total_tests_executed += 1
-                
-                result: TestResult = test_method()
-                
-                if result.status == TestStatus.PASSED:
-                    stats.passed_tests += 1
-                    self._log(f"  [PASS] {suite_name} -> {test_name}")
+                overall_cycle_counter += 1
+                stats.current_cycle = overall_cycle_counter
+                cycle_failed = False
+
+                for s_name, test_name, test_method in test_methods:
+                    if self._stop_requested:
+                        break
+
+                    stats.total_tests_executed += 1
+                    result: TestResult = test_method()
+
+                    if result.status == TestStatus.PASSED:
+                        stats.passed_tests += 1
+                        self._log(f"  [PASS] {s_name} -> {test_name}")
+                    else:
+                        stats.failed_tests += 1
+                        cycle_failed = True
+                        self._log(f"  [FAIL] {s_name} -> {test_name}: {result.message}")
+
+                if cycle_failed:
+                    stats.failed_cycles += 1
                 else:
-                    stats.failed_tests += 1
-                    cycle_failed = True
-                    self._log(f"  [FAIL] {suite_name} -> {test_name}: {result.message}")
+                    stats.passed_cycles += 1
 
-            if cycle_failed:
-                stats.failed_cycles += 1
-            else:
-                stats.passed_cycles += 1
+                stats.elapsed_time_sec = time.time() - stats.start_time
 
-            stats.elapsed_time_sec = time.time() - stats.start_time
+                if self.on_progress:
+                    self.on_progress(stats)
 
-            if self.on_progress:
-                self.on_progress(stats)
+                if cycle_failed and config.stop_on_first_failure:
+                    self._log(f"Stopping loop early due to failure in {suite_name} at cycle {cycle_in_suite}.")
+                    break
+
+                time.sleep(config.delay_between_loops_sec)
 
             if cycle_failed and config.stop_on_first_failure:
                 break
-
-            time.sleep(config.delay_between_loops_sec)
 
         self._is_running = False
         if self.on_complete:
             self.on_complete(stats)
 
-    def _build_execution_list(self, config: LoopConfig) -> List[tuple]:
-        test_list = []
+    def _build_suite_map(self, config: LoopConfig) -> List[Tuple[str, List[Tuple]]]:
+        """Groups test cases by their Ethernet standard."""
+        suite_map = []
+
         if config.enable_10baset1s and self.suite_10m:
-            test_list.extend([
-                ("10BASE-T1S", "FIB10 Hard Short", self.suite_10m.test_fib10_hard_short),
-                ("10BASE-T1S", "FIB12 Hard Open", self.suite_10m.test_fib12_hard_open),
-            ])
+            suite_map.append((
+                "10BASE-T1S", [
+                    ("10BASE-T1S", "FIB10 Hard Short", self.suite_10m.test_fib10_hard_short),
+                    ("10BASE-T1S", "FIB12 Hard Open", self.suite_10m.test_fib12_hard_open),
+                ]
+            ))
+
         if config.enable_100baset1 and self.suite_100m:
-            test_list.extend([
-                ("100BASE-T1", "IOP_31 Baseline", self.suite_100m.test_iop_31_baseline),
-                ("100BASE-T1", "IOP_32 Open Circuit", self.suite_100m.test_iop_32_open_circuit),
-            ])
+            suite_map.append((
+                "100BASE-T1", [
+                    ("100BASE-T1", "IOP_31 Baseline", self.suite_100m.test_iop_31_baseline),
+                    ("100BASE-T1", "IOP_32 Open Circuit", self.suite_100m.test_iop_32_open_circuit),
+                ]
+            ))
+
         if config.enable_1000baset1 and self.suite_1g:
-            test_list.extend([
-                ("1000BASE-T1", "IOP_32 Gigabit Open", self.suite_1g.test_iop_32_gigabit_open_tdr),
-            ])
+            suite_map.append((
+                "1000BASE-T1", [
+                    ("1000BASE-T1", "IOP_32 Gigabit Open", self.suite_1g.test_iop_32_gigabit_open_tdr),
+                ]
+            ))
+
         if config.enable_multigbaset1 and self.suite_multig:
-            test_list.extend([
-                ("MultiGBASE-T1", "Clause 45 Link Check", self.suite_multig.test_multig_baseline_link_clause45),
-                ("MultiGBASE-T1", "RS-FEC Health", self.suite_multig.test_multig_rs_fec_health),
-                ("MultiGBASE-T1", "PAM4 Eye Margin", self.suite_multig.test_multig_pam4_eye_margin),
-            ])
-        return test_list
+            suite_map.append((
+                "MultiGBASE-T1", [
+                    ("MultiGBASE-T1", "Clause 45 Link Check", self.suite_multig.test_multig_baseline_link_clause45),
+                    ("MultiGBASE-T1", "RS-FEC Health", self.suite_multig.test_multig_rs_fec_health),
+                    ("MultiGBASE-T1", "PAM4 Eye Margin", self.suite_multig.test_multig_pam4_eye_margin),
+                ]
+            ))
+
+        return suite_map
 
     def _log(self, message: str):
         msg = f"[{time.strftime('%H:%M:%S')}] {message}"

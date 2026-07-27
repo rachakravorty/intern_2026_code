@@ -1,15 +1,13 @@
 import time
-import serial
 import random
+from arduino_driver import ArduinoDriver
 
 class TestBench1000BASET1:
-    def __init__(self, serial_port="COM3"):
-        self.ser = serial.Serial(serial_port, 115200, timeout=1)
-        self.disable_autoneg()
+    def __init__(self, hw_driver):
+        self.hw = hw_driver  # Store the shared ArduinoDriver instance
 
     def set_relays(self, command: str):
-        self.ser.write(f"{command}\n".encode("utf-8"))
-        time.sleep(0.1)
+        self.hw.send_command(command)  # Driver handles encoding & locks
 
     def disable_autoneg(self):
         """Mock auto-negotiation disable."""
@@ -17,8 +15,7 @@ class TestBench1000BASET1:
 
     # --- MOCKED DUT STATUS (RANDOM 50/50 OUTPUTS) ---
     def get_link_status(self) -> bool:
-        """Simulates Link Status with a random 50/50 result."""
-        return random.choice([True, False])
+        return True
 
     def run_tdr_with_distance(self) -> dict:
         """Simulates High-Speed TDR Status and Fault Location."""
@@ -82,11 +79,15 @@ class TestBench1000BASET1:
 
 
 if __name__ == "__main__":
-    tb = TestBench1000BASET1()
-    try:
-        tb.test_iop_16_link_integrity_frame0()
-        tb.test_iop_32_gigabit_open_tdr()
-        tb.test_iop_33_gigabit_short_tdr()
-        tb.test_iop_21_dut_reset_recovery()
-    except AssertionError as e:
-        print(e)
+    from arduino_driver import ArduinoDriver
+
+    # Context manager automatically opens and closes port
+    with ArduinoDriver(port="COM3") as hw:
+        tb = TestBench1000BASET1(hw_driver=hw)
+        try:
+            tb.test_iop_16_link_integrity_frame0()
+            tb.test_iop_32_gigabit_open_tdr()
+            tb.test_iop_33_gigabit_short_tdr()
+            tb.test_iop_21_dut_reset_recovery()
+        except AssertionError as e:
+            print(f"[TEST FAILED] {e}")

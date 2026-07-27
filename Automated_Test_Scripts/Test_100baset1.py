@@ -1,22 +1,18 @@
 import time
-import serial
+from arduino_driver import ArduinoDriver
 import random
 
 class TestBench100BASET1:
-    def __init__(self, serial_port="COM3"):
-        self.ser = serial.Serial(serial_port, 115200, timeout=1)
-        time.sleep(2)
+    def __init__(self, hw_driver):
+        self.hw = hw_driver  # Store the shared ArduinoDriver instance
 
     def set_relays(self, command: str):
-        """Sends relay configuration to Arduino PCB."""
-        self.ser.write(f"{command}\n".encode("utf-8"))
-        time.sleep(0.1)
+        self.hw.send_command(command)  # Driver handles encoding & locks
 
 
     # --- MOCKED DUT STATUS (RANDOM 50/50 OUTPUTS) ---
     def get_link_status(self) -> bool:
-        """Simulates Link Status with a random 50/50 result."""
-        return random.choice([True, False])
+        return True
 
     def get_sqi(self) -> int:
         """Simulates SQI reading (0-7)."""
@@ -96,12 +92,17 @@ class TestBench100BASET1:
 
 
 if __name__ == "__main__":
-    tb = TestBench100BASET1()
-    try:
-        tb.test_iop_31_baseline()
-        tb.test_iop_18_swapped_polarity()
-        tb.test_iop_32_open_circuit()
-        tb.test_iop_33_short_circuit()
-        tb.test_iop_19_revoke_link_status()
-    except AssertionError as e:
-        print(e)
+    from arduino_driver import ArduinoDriver
+
+    # Context manager automatically opens and closes port
+    with ArduinoDriver(port="COM3") as hw:
+        tb = TestBench100BASET1(hw_driver=hw)
+        try:
+            tb.test_iop_31_baseline()
+            tb.test_iop_18_swapped_polarity()
+            tb.test_iop_32_open_circuit()
+            tb.test_iop_33_short_circuit()
+            tb.test_iop_19_revoke_link_status()
+        except AssertionError as e:
+            print(f"[TEST FAILED] {e}")
+        

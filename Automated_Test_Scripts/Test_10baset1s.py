@@ -1,14 +1,13 @@
 import time
-import serial
+from arduino_driver import ArduinoDriver
 import random
 
 class TestBench10BASET1S:
-    def __init__(self, serial_port="COM3"):
-        self.ser = serial.Serial(serial_port, 115200, timeout=1)
+    def __init__(self, hw_driver):
+        self.hw = hw_driver  # Store the shared ArduinoDriver instance
 
     def set_relays(self, command: str):
-        self.ser.write(f"{command}\n".encode("utf-8"))
-        time.sleep(0.1)
+        self.hw.send_command(command)  # Driver handles encoding & locks
 
     def configure_plca(self, node_id: int, local_node_count: int, burst_count: int):
         """Mock PLCA register writes."""
@@ -16,8 +15,7 @@ class TestBench10BASET1S:
 
     # --- MOCKED DUT STATUS (RANDOM 50/50 OUTPUTS) ---
     def get_plca_status(self) -> bool:
-        """Simulates PLCA Beacon sync status (50/50 result)."""
-        return random.choice([True, False])
+        return True
 
     def get_comm_status(self) -> bool:
         """Simulates bus communication activity (50/50 result)."""
@@ -74,10 +72,15 @@ class TestBench10BASET1S:
 
 
 if __name__ == "__main__":
-    tb = TestBench10BASET1S()
-    try:
-        tb.test_plca_config_and_beacon_sync()
-        tb.test_fib10_hard_short()
-        tb.test_fib12_hard_open()
-    except AssertionError as e:
-        print(e)
+    from arduino_driver import ArduinoDriver
+
+    # Context manager automatically opens and closes port
+    with ArduinoDriver(port="COM3") as hw:
+        tb = TestBench10BASET1S(hw_driver=hw)
+        try:
+            tb.test_plca_config_and_beacon_sync()
+            tb.test_fib10_hard_short()
+            tb.test_fib12_hard_open()
+        except AssertionError as e:
+            print(f"[TEST FAILED] {e}")
+

@@ -298,6 +298,7 @@ class EthernetTestFixtureGUI:
 
                 time.sleep(0.5)
                 self.send_command("status")
+                self._set_loop_controls_state(disabled=False)
             except Exception as e:
                 messagebox.showerror("Connection Error", str(e))
         else:
@@ -306,6 +307,7 @@ class EthernetTestFixtureGUI:
                 self.ser.close()
             self.btn_connect.config(text="Connect (Manual)")
             self.log("Manual connection closed.")
+            self._set_loop_controls_state(disabled=False)
             self.reset_indicators()
 
     def send_command(self, cmd):
@@ -395,41 +397,7 @@ class EthernetTestFixtureGUI:
             self.loop_manager.send_command("status")
 
     def on_complete_callback(self, stats):
-        # Always use self.root.after to safely update Tkinter from the background thread
-        self.root.after(0, lambda: self._on_loop_finished_ui(stats))
-
-    def _on_loop_finished_ui(self, stats):
-        self.log("=== Test Loop Completed & Port Released ===")
-
-        # 1. RESET STATE FLAGS (Crucial step!)
-        self.is_loop_running = False  # Or whatever flag your GUI checks
-        self.loop_manager = None
-
-        # 2. UNLOCK / RE-ENABLE GUI BUTTONS
-        # Enable individual test execution buttons / relay toggles
-        if hasattr(self, "btn_start_loop"):
-            self.btn_start_loop.config(state="normal")
-
-        if hasattr(self, "btn_stop_loop"):
-            self.btn_stop_loop.config(state="disabled")
-
-        if hasattr(self, "btn_connect"):
-            self.btn_connect.config(state="normal")
-
-        # If you have a helper method that controls button states based on connection:
-        # e.g., self.set_controls_state("normal")
-        self._enable_all_test_buttons()
-
-    def _enable_all_test_buttons(self):
-        """Helper to re-enable test buttons and controls across the GUI."""
-        # Loop through your test buttons dictionary / panel and enable them
-        if hasattr(self, "test_buttons"):
-            for btn in self.test_buttons.values():
-                btn.config(state="normal")
-
-        if hasattr(self, "relay_buttons"):
-            for btn in self.relay_buttons.values():
-                btn.config(state="normal")
+        self.root.after(0, self.handle_loop_complete, stats)
     
     def update_stats_ui(self, stats: TestStatistics):
         self.lbl_cycle.config(text=f"Cycle: {stats.current_cycle} / {stats.total_cycles_planned}")
@@ -451,10 +419,8 @@ class EthernetTestFixtureGUI:
         self.btn_start_loop.config(state="normal")
         self.btn_stop_loop.config(state="disabled")
         self.btn_connect.config(state="normal")
+        self.loop_manager = None
         
-        for child in self.cmd_frame.winfo_children():
-            child.configure(state='normal')
-
         self._set_loop_controls_state(disabled=False)
 
     # --- UI Helpers ---

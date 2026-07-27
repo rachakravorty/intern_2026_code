@@ -144,6 +144,12 @@ class LoopManager:
 
                 stats.elapsed_time_sec = time.time() - stats.start_time
 
+                try:
+                    if self.hw:
+                        self.hw.send_command("status")
+                except Exception as exc:
+                    self._log(f"[WARN] Status poll failed during loop: {exc}")
+
                 if self.on_progress:
                     self.on_progress(stats)
 

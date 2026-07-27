@@ -22,7 +22,7 @@ class EthernetTestFixtureGUI:
         self.root = root
         self.root.title("Automotive Ethernet Test Fixture Controller")
         self.root.geometry("700x880")
-        self.root.resizable(False, True)
+        self.root.resizable(True, True)
 
         self.ser = None
         self.is_connected = False
@@ -49,6 +49,7 @@ class EthernetTestFixtureGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def create_widgets(self):
+        
         # 1. Connection Frame
         conn_frame = ttk.LabelFrame(self.root, text=" Serial Connection ", padding=10)
         conn_frame.pack(fill="x", padx=10, pady=5)
@@ -91,6 +92,8 @@ class EthernetTestFixtureGUI:
         self.btn_stop_loop = ttk.Button(stats_frame, text="Stop Loop", command=self.stop_loop, state="disabled")
         self.btn_stop_loop.grid(row=0, column=1, padx=5, pady=5)
 
+        self.loop_running = False
+
         self.lbl_cycle = ttk.Label(stats_frame, text="Cycle: 0 / 0", font=("Helvetica", 10, "bold"))
         self.lbl_cycle.grid(row=0, column=2, padx=15)
         
@@ -110,23 +113,23 @@ class EthernetTestFixtureGUI:
         self.cmd_frame = ttk.LabelFrame(self.root, text=" Manual Test Modes ", padding=10)
         self.cmd_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Button(self.cmd_frame, text="Normal Passthrough", command=self.apply_normal_passthrough).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Swap Polarity (IOP_18)", command=self.apply_swap_polarity).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Inject Open Circuit (IOP_32)", command=self.apply_open_circuit).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Inject Short Circuit (IOP_33)", command=self.apply_short_circuit).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Enable DT Routing", command=self.apply_enable_dt_routing).grid(row=2, column=0, padx=5, pady=5, sticky="ew")
-        ttk.Button(self.cmd_frame, text="Disable DT Routing", command=self.apply_disable_dt_routing).grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Normal Passthrough", command=lambda: self.confirm_and_run_action("Confirm Mode Change", "Apply Normal Passthrough?", self.apply_normal_passthrough)).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Swap Polarity (IOP_18)", command=lambda: self.confirm_and_run_action("Confirm Mode Change", "Apply Swap Polarity?", self.apply_swap_polarity)).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Inject Open Circuit (IOP_32)", command=lambda: self.confirm_and_run_action("Confirm Mode Change", "Apply Open Circuit?", self.apply_open_circuit)).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Inject Short Circuit (IOP_33)", command=lambda: self.confirm_and_run_action("Confirm Mode Change", "Apply Short Circuit?", self.apply_short_circuit)).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Enable DT Routing", command=lambda: self.confirm_and_run_action("Confirm Mode Change", "Enable DT Routing?", self.apply_enable_dt_routing)).grid(row=2, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.cmd_frame, text="Disable DT Routing", command=lambda: self.confirm_and_run_action("Confirm Mode Change", "Disable DT Routing?", self.apply_disable_dt_routing)).grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
         self.cmd_frame.columnconfigure(0, weight=1)
         self.cmd_frame.columnconfigure(1, weight=1)
 
         # 4. Relay Status Visualization & Manual Control
-        relay_frame = ttk.LabelFrame(self.root, text=" Live Relay Status Matrix ", padding=10)
-        relay_frame.pack(fill="x", padx=10, pady=5)
+        self.relay_frame = ttk.LabelFrame(self.root, text=" Live Relay Status Matrix ", padding=10)
+        self.relay_frame.pack(fill="x", padx=10, pady=5)
 
         for idx, r_name in enumerate(self.relay_names):
             lbl = tk.Label(
-                relay_frame,
+                self.relay_frame,
                 text=r_name,
                 width=8,
                 relief="ridge",
@@ -138,7 +141,7 @@ class EthernetTestFixtureGUI:
             self.relay_indicators[r_name] = lbl
 
             btn = ttk.Button(
-                relay_frame,
+                self.relay_frame,
                 text=self._relay_button_text(self.relay_status[idx]),
                 command=lambda r_name=r_name, idx=idx: self.toggle_relay_state(r_name, idx),
                 width=9
@@ -146,7 +149,11 @@ class EthernetTestFixtureGUI:
             btn.grid(row=1, column=idx, padx=4, pady=3)
             self.relay_buttons[r_name] = btn
 
-        ttk.Button(relay_frame, text="Query Board Status", command=lambda: self.send_command("status")).grid(row=2, column=0, columnspan=7, pady=8)
+        ttk.Button(
+            self.relay_frame,
+            text="Query Board Status",
+            command=lambda: self.confirm_and_run_action("Confirm Board Query", "Query board status?", lambda: self.send_command("status"))
+        ).grid(row=2, column=0, columnspan=7, pady=8)
 
         # 5. Serial Log Console
         log_frame = ttk.LabelFrame(self.root, text=" Console Output ", padding=10)
@@ -231,12 +238,16 @@ class EthernetTestFixtureGUI:
         return "Turn Off" if is_on else "Turn On"
 
     def _set_indicator_state(self, r_name, is_on):
-        self.relay_indicators[r_name].config(bg=self._relay_color(is_on), fg="white")
+        self.relay_indicators[r_name].config(bg=self._relay_color(is_on), fg="black")
 
     def _set_button_state(self, r_name, is_on):
         self.relay_buttons[r_name].config(text=self._relay_button_text(is_on))
 
     def toggle_relay_state(self, r_name, idx):
+        if self.loop_running:
+            self.log("Relay changes are disabled while the loop is running.")
+            return
+
         new_state = not self.relay_status[idx]
         confirm = messagebox.askyesno("Confirm Relay Change", f"Switch {r_name} to {'ON' if new_state else 'OFF'}?")
         if confirm:
@@ -245,6 +256,13 @@ class EthernetTestFixtureGUI:
             self._set_button_state(r_name, new_state)
             self.push_state_to_arduino()
             self.log(f"{r_name} set to {'ON' if new_state else 'OFF'}")
+
+    def confirm_and_run_action(self, title, message, action):
+        if self.loop_running:
+            self.log("Manual actions are disabled while the loop is running.")
+            return
+        if messagebox.askyesno(title, message):
+            action()
 
     def push_state_to_arduino(self):
         if not self.is_connected or not self.ser:
@@ -342,12 +360,18 @@ class EthernetTestFixtureGUI:
             messagebox.showerror("Hardware Error", f"Failed to initialize board on {port}")
             return
 
+        self.loop_running = True
         self.btn_start_loop.config(state="disabled")
         self.btn_stop_loop.config(state="normal")
         self.btn_connect.config(state="disabled")
 
         for child in self.cmd_frame.winfo_children():
             child.configure(state='disabled')
+
+        for child in self.relay_frame.winfo_children():
+            child.configure(state='disabled')
+
+        self._set_loop_controls_state(disabled=True)
 
         self.loop_manager.start_loop(config)
 
@@ -364,6 +388,12 @@ class EthernetTestFixtureGUI:
     def on_progress_callback(self, stats: TestStatistics):
         self.root.after(0, self.update_stats_ui, stats)
 
+        if self.is_connected and self.ser:
+            self.send_command("status")
+        # If LoopManager owns the serial connection, query via loop_manager
+        elif self.loop_manager and hasattr(self.loop_manager, 'send_command'):
+            self.loop_manager.send_command("status")
+
     def on_complete_callback(self, stats: TestStatistics):
         self.root.after(0, self.handle_loop_complete, stats)
 
@@ -376,16 +406,22 @@ class EthernetTestFixtureGUI:
         mins, secs = divmod(int(stats.elapsed_time_sec), 60)
         self.lbl_time.config(text=f"Time: {mins:02d}:{secs:02d}")
 
+        if self.loop_running and self.is_connected and self.ser:
+            self.send_command("status")
+
     def handle_loop_complete(self, stats: TestStatistics):
         self.log("--- LOOP COMPLETE ---")
         self.log(f"Final Yield: {stats.pass_yield_percent:.1f}%")
         
+        self.loop_running = False
         self.btn_start_loop.config(state="normal")
         self.btn_stop_loop.config(state="disabled")
         self.btn_connect.config(state="normal")
         
         for child in self.cmd_frame.winfo_children():
             child.configure(state='normal')
+
+        self._set_loop_controls_state(disabled=False)
 
     # --- UI Helpers ---
     def parse_line(self, line):
@@ -398,6 +434,9 @@ class EthernetTestFixtureGUI:
 
     def update_indicators(self, data):
         """Updates relay status indicators and toggle buttons from board status."""
+        if not isinstance(data, dict):
+            return
+
         for r_name in self.relay_names:
             if r_name in data:
                 idx = self.relay_index[r_name]
@@ -406,12 +445,30 @@ class EthernetTestFixtureGUI:
                 self._set_indicator_state(r_name, is_active)
                 self._set_button_state(r_name, is_active)
 
+        if "ST1" in data or "ST2" in data or "ST3" in data or "ST4" in data or "DT" in data or "DT1" in data or "DT2" in data:
+            self.root.after(0, self.refresh_relay_button_colors)
+
+    def refresh_relay_button_colors(self):
+        for r_name in self.relay_names:
+            idx = self.relay_index[r_name]
+            self._set_indicator_state(r_name, self.relay_status[idx])
+            self._set_button_state(r_name, self.relay_status[idx])
+
     def reset_indicators(self):
         """Resets all relay status indicators and buttons back to Off (Red)."""
         for idx, r_name in enumerate(self.relay_names):
             self.relay_status[idx] = False
             self._set_indicator_state(r_name, False)
             self._set_button_state(r_name, False)
+
+    def _set_loop_controls_state(self, disabled: bool):
+        for child in self.cmd_frame.winfo_children():
+            if isinstance(child, ttk.Button):
+                child.configure(state='disabled' if disabled else 'normal')
+
+        for child in self.relay_frame.winfo_children():
+            if isinstance(child, ttk.Button):
+                child.configure(state='disabled' if disabled else 'normal')
 
     def log(self, text):
         self.log_box.config(state="normal")

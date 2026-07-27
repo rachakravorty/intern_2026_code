@@ -8,46 +8,56 @@ class TestIOP18:
 
     def run(self):
 
-        print("====================================")
-        print("Running 100BASET1_IOP_18")
+        print("--------------------------------")
+        print("100BASET1_IOP_18")
         print("Swapped Polarity Test")
-        print("====================================")
+        print("--------------------------------")
 
-        # 1. Configure the fixture
+        # Configure relay board
         self.arduino.swap_polarity()
 
-        # 2. Allow relays to settle
-        time.sleep(1)
+        # Allow relays to settle
+        time.sleep(0.1)
 
-        # 3. Monitor the DUT for 750 ms
-        start_time = time.time()
-        link_detected = False
+        start = time.time()
+        link_up = False
 
-        while (time.time() - start_time) < 0.75:
+        # Monitor for 750 ms
+        while (time.time() - start) < 0.75:
 
             if self.mdio.read_link_status():
-                link_detected = True
+                link_up = True
                 break
 
             time.sleep(0.01)
 
-        # 4. Optional: Read polarity flag if supported
-        polarity_detected = self.mdio.read_polarity_status()
+        # Read polarity flag if supported
+        polarity_flag = self.mdio.read_polarity_flag()
 
-        # 5. Determine PASS/FAIL
-        if (not link_detected) or polarity_detected:
-            passed = True
-        else:
-            passed = False
-
-        # 6. Return fixture to normal
+        # Return relay board to normal
         self.arduino.normal_mode()
 
-        # 7. Return results
-        return {
-            "Test": "100BASET1_IOP_18",
-            "Passed": passed,
-            "Expected": "Link Down or Polarity Flag Set",
-            "LinkDetected": link_detected,
-            "PolarityDetected": polarity_detected
-        }
+        # PASS / FAIL
+        if (not link_up) or polarity_flag:
+
+            print("PASS")
+
+            return {
+                "Test ID": "100BASET1_IOP_18",
+                "Result": True,
+                "Expected": "Link Down for >=750ms or Polarity Flag",
+                "Link Status": link_up,
+                "Polarity Flag": polarity_flag
+            }
+
+        else:
+
+            print("FAIL")
+
+            return {
+                "Test ID": "100BASET1_IOP_18",
+                "Result": False,
+                "Expected": "Link Down for >=750ms or Polarity Flag",
+                "Link Status": link_up,
+                "Polarity Flag": polarity_flag
+            }

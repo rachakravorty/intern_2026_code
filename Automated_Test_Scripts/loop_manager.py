@@ -100,72 +100,101 @@ class LoopManager:
         suite_map = self._build_suite_map(config)
         total_enabled_standards = len(suite_map)
         
-        # Calculate total cycles across all enabled standards sequentially
         total_cycles_planned = total_enabled_standards * config.iterations
-        stats = TestStatistics(total_cycles_planned=total_cycles_planned, start_time=time.time())
+        stats = TestStatistics(
+            total_cycles_planned=total_cycles_planned, start_time=time.time()
+        )
 
         overall_cycle_counter = 0
 
-        # Outer Loop: Run sequentially through each enabled Ethernet standard
-        for suite_name, test_methods in suite_map:
-            if self._stop_requested:
-                break
-
-            self._log(f"=== Starting Test Block: {suite_name} ({config.iterations} iterations) ===")
-
-            # Inner Loop: Repeat tests for the active standard for all requested iterations
-            for cycle_in_suite in range(1, config.iterations + 1):
+        try:
+            for suite_name, test_methods in suite_map:
                 if self._stop_requested:
                     break
 
-                overall_cycle_counter += 1
-                stats.current_cycle = overall_cycle_counter
-                cycle_failed = False
+                self._log(
+                    f"=== Starting Test Block: {suite_name} ({config.iterations} iterations) ==="
+                )
 
-                for s_name, test_name, test_method in test_methods:
+                for cycle_in_suite in range(1, config.iterations + 1):
                     if self._stop_requested:
                         break
 
-                    stats.total_tests_executed += 1
-                    result: TestResult = test_method()
+                    overall_cycle_counter += 1
+                    stats.current_cycle = overall_cycle_counter
+                    cycle_failed = False
 
-                    if result.status == TestStatus.PASSED:
-                        stats.passed_tests += 1
-                        self._log(f"  [PASS] {s_name} -> {test_name}")
+                    for s_name, test_name, test_method in test_methods:
+                        if self._stop_requested:
+                            break
+
+                        stats.total_tests_executed += 1
+                        result: TestResult = test_method()
+
+                        if result.status == TestStatus.PASSED:
+                            stats.passed_tests += 1
+                            self._log(f"   [PASS] {s_name} -> {test_name}")
+                        else:
+                            stats.failed_tests += 1
+                            cycle_failed = True
+                            self._log(
+                                f"   [FAIL] {s_name} -> {test_name}: {result.message}"
+                            )
+
+                    if cycle_failed:
+                        stats.failed_cycles += 1
                     else:
-                        stats.failed_tests += 1
-                        cycle_failed = True
-                        self._log(f"  [FAIL] {s_name} -> {test_name}: {result.message}")
+                        stats.passed_cycles += 1
 
-                if cycle_failed:
-                    stats.failed_cycles += 1
-                else:
-                    stats.passed_cycles += 1
+                    stats.elapsed_time_sec = time.time() - stats.start_time
 
-                stats.elapsed_time_sec = time.time() - stats.start_time
+                    try:
+                        if hasattr(self, "hw") and self.hw:
+                            self.hw.send_command("status")
+                    except Exception as exc:
+                        self._log(f"[WARN] Status poll failed during loop: {exc}")
 
-                try:
-                    if self.hw:
-                        self.hw.send_command("status")
-                except Exception as exc:
-                    self._log(f"[WARN] Status poll failed during loop: {exc}")
+                    if hasattr(self, "on_progress") and self.on_progress:
+                        try:
+                            self.on_progress(stats)
+                        except Exception as prog_err:
+                            self._log(f"[WARN] Progress callback error: {prog_err}")
 
-                if self.on_progress:
-                    self.on_progress(stats)
+                    if cycle_failed and config.stop_on_first_failure:
+                        self._log(
+                            f"Stopping loop early due to failure in {suite_name} at cycle {cycle_in_suite}."
+                        )
+                        break
+
+                    time.sleep(config.delay_between_loops_sec)
 
                 if cycle_failed and config.stop_on_first_failure:
-                    self._log(f"Stopping loop early due to failure in {suite_name} at cycle {cycle_in_suite}.")
                     break
 
-                time.sleep(config.delay_between_loops_sec)
+        except Exception as e:
+            self._log(f"[CRITICAL ERROR] Loop process crashed: {e}")
 
-            if cycle_failed and config.stop_on_first_failure:
-                break
+        finally:
+            self._is_running = False
 
-        self._is_running = False
-        if self.on_complete:
-            self.on_complete(stats)
+            # 1. SAFE SERIAL PORT CLOSE
+            if hasattr(self, "hw") and self.hw:
+                try:
+                    # Check for direct PySerial connection object
+                    if hasattr(self.hw, "ser") and self.hw.ser:
+                        self.hw.ser.close()
+                    elif hasattr(self.hw, "close"):
+                        self.hw.close()
+                    self._log("Serial port closed successfully.")
+                except Exception as close_err:
+                    self._log(f"[WARN] Failed to close serial port: {close_err}")
 
+            # 2. SAFE COMPLETION CALLBACK
+            if hasattr(self, "on_complete") and self.on_complete:
+                try:
+                    self.on_complete(stats)
+                except Exception as callback_err:
+                    self._log(f"[WARN] Completion callback failed: {callback_err}")
     def _build_suite_map(self, config: LoopConfig) -> List[Tuple[str, List[Tuple]]]:
         """Groups test cases by their Ethernet standard."""
         suite_map = []

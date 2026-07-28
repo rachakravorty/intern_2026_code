@@ -362,7 +362,17 @@ const int BUFFER_SIZE = 64;
 char command_buffer[BUFFER_SIZE];
 SerialCommands serial_commands(&Serial, command_buffer, BUFFER_SIZE, "\n");
 
+void identify(SerialCommands *sender)
+{
+    sender->GetSerial()->println("ETHERNET_TEST_FIXTURE_V1");
+}
+
+SerialCommand cmd_identify("identify", identify);
+
 void setup() {
+
+    Serial.begin(115200);
+    
     read_saved_pinconfig(PIN_COUNT, active);
     set_pins(PIN_COUNT, active);
     sync_aux_outputs();
@@ -380,10 +390,12 @@ void setup() {
     serial_commands.AddCommand(&cmd_fault_open);
     serial_commands.AddCommand(&cmd_fault_short);
     serial_commands.AddCommand(&cmd_routing);
+    //scan COM ports
+    serial_commands.AddCommand(&cmd_identify);
 
     serial_commands.SetDefaultHandler(&unknown_command);
 
-    Serial.begin(115200);
+    
     Serial.println("Fixture ready");
 }
 

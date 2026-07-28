@@ -274,38 +274,100 @@ class EthernetTestFixtureGUI:
         
         self.send_command(message)
 
-    # --- Manual Connection Management ---
+
     def refresh_ports(self):
-        ports = [port.device for port in serial.tools.list_ports.comports()]
-        self.port_cb['values'] = ports
-        if ports:
-            self.port_cb.current(0)
+        ports = ["Auto"]  # Default option
+    
+        for port in serial.tools.list_ports.comports():
+            ports.append(port.device)
+    
+        self.port_cb["values"] = ports
+        self.port_cb.current(0)
+
+    def auto_connect(self):
+        ports = serial.tools.list_ports.comports()
+    
+        for port in ports:
+            try:
+                ser = serial.Serial(port.device, 115200, timeout=1)
+    
+                # Wait for Arduino to reset
+                time.sleep(2)
+    
+                # Ask the Arduino who it is
+                ser.write(b"identify\n")
+    
+
+                reply = ser.readline().decode().strip()
+
+                if reply == "ETHERNET_TEST_FIXTURE_V1":
+                    return ser
+    
+                ser.close()
+    
+            except Exception:
+                pass
+    
+        return None
 
     def toggle_connection(self):
         if not self.is_connected:
-            port = self.port_cb.get()
-            if not port:
-                messagebox.showerror("Error", "No COM port selected.")
-                return
+    
             try:
-                self.ser = serial.Serial(port, 115200, timeout=1)
+                selected = self.port_cb.get()
+    
+                if selected == "Auto":
+    
+                    self.ser = self.auto_connect()
+    
+                    if self.ser is None:
+                        messagebox.showerror(
+                            "Connection Error",
+                            "Could not find the Ethernet Test Fixture."
+                        )
+                        return
+    
+                    port = self.ser.port
+    
+                else:
+    
+                    port = selected
+    
+                    self.ser = serial.Serial(
+                        port,
+                        115200,
+                        timeout=1
+                    )
+    
+                # Common setup for both Auto and Manual connections
                 self.is_connected = True
-                self.btn_connect.config(text="Disconnect (Manual)")
-                self.log("Connected manually to " + port)
-
-                self.reader_thread = threading.Thread(target=self.read_serial_loop, daemon=True)
+                self.btn_connect.config(text="Disconnect")
+                self.log(f"Connected to {port}")
+    
+                self.reader_thread = threading.Thread(
+                    target=self.read_serial_loop,
+                    daemon=True
+                )
                 self.reader_thread.start()
-
+    
                 time.sleep(0.5)
                 self.send_command("status")
+                self._set_loop_controls_state(disabled=False)
+    
             except Exception as e:
                 messagebox.showerror("Connection Error", str(e))
+    
         else:
+    
             self.is_connected = False
+    
             if self.ser:
                 self.ser.close()
-            self.btn_connect.config(text="Connect (Manual)")
-            self.log("Manual connection closed.")
+                self.ser = None
+    
+            self.btn_connect.config(text="Connect")
+            self.log("Disconnected.")
+            self._set_loop_controls_state(disabled=False)
             self.reset_indicators()
 
     def send_command(self, cmd):
@@ -394,9 +456,9 @@ class EthernetTestFixtureGUI:
         elif self.loop_manager and hasattr(self.loop_manager, 'send_command'):
             self.loop_manager.send_command("status")
 
-    def on_complete_callback(self, stats: TestStatistics):
+    def on_complete_callback(self, stats):
         self.root.after(0, self.handle_loop_complete, stats)
-
+    
     def update_stats_ui(self, stats: TestStatistics):
         self.lbl_cycle.config(text=f"Cycle: {stats.current_cycle} / {stats.total_cycles_planned}")
         self.lbl_yield.config(text=f"Yield: {stats.pass_yield_percent:.1f}%")
@@ -417,10 +479,8 @@ class EthernetTestFixtureGUI:
         self.btn_start_loop.config(state="normal")
         self.btn_stop_loop.config(state="disabled")
         self.btn_connect.config(state="normal")
+        self.loop_manager = None
         
-        for child in self.cmd_frame.winfo_children():
-            child.configure(state='normal')
-
         self._set_loop_controls_state(disabled=False)
 
     # --- UI Helpers ---

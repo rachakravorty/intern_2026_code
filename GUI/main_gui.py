@@ -365,7 +365,7 @@ class EthernetTestFixtureGUI:
                 self.ser.close()
                 self.ser = None
     
-            self.btn_connect.config(text="Connect")
+            self.btn_connect.config(text="Connect (Manual)")
             self.log("Disconnected.")
             self._set_loop_controls_state(disabled=False)
             self.reset_indicators()

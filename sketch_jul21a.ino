@@ -138,6 +138,12 @@ void cmd_get_status_handler(SerialCommands *sender) {
 }
 SerialCommand cmd_status("status", cmd_get_status_handler);
 
+void identify(SerialCommands *sender)
+{
+    sender->GetSerial()->println("ETHERNET_TEST_FIXTURE_V1");
+}
+SerialCommand cmd_identify("identify", identify);
+
 void cmd_set_config_handler(SerialCommands *sender) {
     char *config_text = sender->Next();
     if (!config_text) {
@@ -216,30 +222,40 @@ SerialCommand cmd_read_pin("read-pin", read_pin);
 
 // Mode: Passthrough (All relays LOW)
 void mode_normal(SerialCommands *sender) {
-    for (int p = 2; p <= 8; ++p) {
-        active[p].value = LOW;
-        write_pin(p, LOW, active);
-    }
+    active[2].value = LOW;
+    active[3].value = LOW;
+    write_pin(2, LOW, active);
+    write_pin(3, LOW, active);
+
+    active[4].value = HIGH;
+    active[5].value = HIGH;
+    write_pin(4, HIGH, active);
+    write_pin(5, HIGH, active);
+
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_normal("normal", mode_normal);
 
 // Mode: Polarity Swapped (DT1 & DT2 HIGH)
 void mode_polarity_swap(SerialCommands *sender) {
-    active[7].value = HIGH;
-    active[8].value = HIGH;
-    write_pin(7, HIGH, active);
-    write_pin(8, HIGH, active);
+    active[7].value = !active[7].value;
+    active[8].value = !active[8].value;
+    write_pin(7, !active[7].value, active);
+    write_pin(8, !active[8].value, active);
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_polarity("swap-polarity", mode_polarity_swap);
 
 // Mode: Open Circuit Fault (ST3 & ST4 HIGH)
 void mode_fault_open(SerialCommands *sender) {
-    active[4].value = HIGH;
-    active[5].value = HIGH;
-    write_pin(4, HIGH, active);
-    write_pin(5, HIGH, active);
+    active[2].value = LOW;
+    active[3].value = LOW;
+    active[4].value = LOW;
+    active[5].value = LOW;
+    write_pin(2, LOW, active);
+    write_pin(3, LOW, active);
+    write_pin(4, LOW, active);
+    write_pin(5, LOW, active);
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_fault_open("fault-open", mode_fault_open);
@@ -250,6 +266,11 @@ void mode_fault_short(SerialCommands *sender) {
     active[3].value = HIGH;
     write_pin(2, HIGH, active);
     write_pin(3, HIGH, active);
+
+    active[4].value = HIGH;
+    active[5].value = HIGH;
+    write_pin(4, HIGH, active);
+    write_pin(5, HIGH, active);
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_fault_short("fault-short", mode_fault_short);
@@ -274,6 +295,10 @@ char command_buffer[BUFFER_SIZE];
 SerialCommands serial_commands(&Serial, command_buffer, BUFFER_SIZE, "\n");
 
 void setup() {
+    
+    Serial.begin(115200);
+    while (!Serial) {}
+    
     read_saved_pinconfig(PIN_COUNT, active);
     set_pins(PIN_COUNT, active);
 
@@ -283,6 +308,7 @@ void setup() {
     serial_commands.AddCommand(&cmd_set_pin);
     serial_commands.AddCommand(&cmd_read_pin);
     serial_commands.AddCommand(&cmd_status);
+    serial_commands.AddCommand(&cmd_identify);
     serial_commands.AddCommand(&cmd_set_config);
     serial_commands.AddCommand(&cmd_normal);
     serial_commands.AddCommand(&cmd_polarity);
@@ -291,9 +317,6 @@ void setup() {
     serial_commands.AddCommand(&cmd_routing);
 
     serial_commands.SetDefaultHandler(&unknown_command);
-
-    Serial.begin(115200);
-    while (!Serial) {}
 }
 
 void loop() {

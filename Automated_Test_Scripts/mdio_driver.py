@@ -48,3 +48,17 @@ class MDIODriver:
         code_map = {"OK": 0, "OPEN": 1, "SHORT": 2}
         code = code_map.get(status_str, 0)
         self._registers[0x001C] = (code << 8) | (distance_m & 0xFF)
+
+    def read_clause45(self, mmd: int, reg: int) -> int:
+        if self.mock:
+            if mmd == 1 and reg == 1:
+                return 0x0004          # Link Up
+            if mmd == 3 and reg == 0x0800:
+                return 0               # Corrected FEC
+            if mmd == 3 and reg == 0x0801:
+                return 0               # Uncorrectable FEC
+            if mmd == 1 and reg == 0x0900:
+                return 9               # Eye margin
+            return 0
+
+        raise NotImplementedError("Clause 45 not implemented.")

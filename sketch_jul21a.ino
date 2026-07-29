@@ -200,6 +200,7 @@ void set_pin(SerialCommands *sender) {
     int value = get_int_arg(sender, "set-pin", "value");
     if (value < 0) return;
 
+    pinMode(pin, OUTPUT);
     active[pin].inout = OUTPUT;
     active[pin].value = value;
     write_pin(pin, value, active);
@@ -240,8 +241,8 @@ SerialCommand cmd_normal("normal", mode_normal);
 void mode_polarity_swap(SerialCommands *sender) {
     active[7].value = !active[7].value;
     active[8].value = !active[8].value;
-    write_pin(7, !active[7].value, active);
-    write_pin(8, !active[8].value, active);
+    write_pin(7, active[7].value, active);
+    write_pin(8, active[8].value, active);
     send_json_status(sender->GetSerial());
 }
 SerialCommand cmd_polarity("swap-polarity", mode_polarity_swap);

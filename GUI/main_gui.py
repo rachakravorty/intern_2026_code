@@ -401,6 +401,7 @@ class EthernetTestFixtureGUI:
         if self.is_connected:
             self.log("Releasing manual COM port lock for Automated Loop...")
             self.toggle_connection()
+            time.sleep(0.2)
 
         config = LoopConfig(
             iterations=self.loop_iters_var.get(),
@@ -450,11 +451,12 @@ class EthernetTestFixtureGUI:
     def on_progress_callback(self, stats: TestStatistics):
         self.root.after(0, self.update_stats_ui, stats)
 
-        if self.is_connected and self.ser:
-            self.send_command("status")
-        # If LoopManager owns the serial connection, query via loop_manager
-        elif self.loop_manager and hasattr(self.loop_manager, 'send_command'):
-            self.loop_manager.send_command("status")
+        if self.loop_manager and self.loop_manager.hw:
+            try:
+                raw_response = self.loop_manager.hw.send_command("status")
+                self.parse_line(raw_response)
+            except Exception:
+                pass
 
     def on_complete_callback(self, stats):
         self.root.after(0, self.handle_loop_complete, stats)
@@ -481,7 +483,10 @@ class EthernetTestFixtureGUI:
         self.btn_connect.config(state="normal")
         self.loop_manager = None
         
-        self._set_loop_controls_state(disabled=False)
+        if self.is_connected:
+            self._set_loop_controls_state(disabled=False)
+        else:
+            self.reset_indicators()
 
     # --- UI Helpers ---
     def parse_line(self, line):

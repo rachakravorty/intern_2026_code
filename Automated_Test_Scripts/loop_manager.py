@@ -177,15 +177,10 @@ class LoopManager:
         finally:
             self._is_running = False
 
-            # 1. SAFE SERIAL PORT CLOSE
             if hasattr(self, "hw") and self.hw:
                 try:
-                    # Check for direct PySerial connection object
-                    if hasattr(self.hw, "ser") and self.hw.ser:
-                        self.hw.ser.close()
-                    elif hasattr(self.hw, "close"):
-                        self.hw.close()
-                    self._log("Serial port closed successfully.")
+                    self.hw.close()
+                    self._log("Hardware safely reset to normal and serial port closed.")
                 except Exception as close_err:
                     self._log(f"[WARN] Failed to close serial port: {close_err}")
 
@@ -195,10 +190,12 @@ class LoopManager:
                     self.on_complete(stats)
                 except Exception as callback_err:
                     self._log(f"[WARN] Completion callback failed: {callback_err}")
+
     def _build_suite_map(self, config: LoopConfig) -> List[Tuple[str, List[Tuple]]]:
         """Groups test cases by their Ethernet standard."""
         suite_map = []
 
+        # --- 10BASE-T1S (2 Tests) ---
         if config.enable_10baset1s and self.suite_10m:
             suite_map.append((
                 "10BASE-T1S", [
@@ -207,21 +204,33 @@ class LoopManager:
                 ]
             ))
 
+        # --- 100BASE-T1 (8 Tests) ---
         if config.enable_100baset1 and self.suite_100m:
             suite_map.append((
                 "100BASE-T1", [
                     ("100BASE-T1", "IOP_31 Baseline", self.suite_100m.test_iop_31_baseline),
+                    ("100BASE-T1", "IOP_18 Swapped Polarity", self.suite_100m.test_iop_18_swapped_polarity),
                     ("100BASE-T1", "IOP_32 Open Circuit", self.suite_100m.test_iop_32_open_circuit),
+                    ("100BASE-T1", "IOP_33 Short Circuit", self.suite_100m.test_iop_33_short_circuit),
+                    ("100BASE-T1", "IOP_17 Master-Master", self.suite_100m.test_iop_17_master_master),
+                    ("100BASE-T1", "IOP_19 Revoke Link", self.suite_100m.test_iop_19_revoke_link),
+                    ("100BASE-T1", "IOP_21 DUT Reset Recovery", self.suite_100m.test_iop_21_dut_reset_recovery),
+                    ("100BASE-T1", "WAKE_IOP_3 Reception", self.suite_100m.test_wake_iop_3_reception),
                 ]
             ))
 
+        # --- 1000BASE-T1 (4 Tests) ---
         if config.enable_1000baset1 and self.suite_1g:
             suite_map.append((
                 "1000BASE-T1", [
-                    ("1000BASE-T1", "IOP_32 Gigabit Open", self.suite_1g.test_iop_32_gigabit_open_tdr),
+                    ("1000BASE-T1", "IOP_31 Gigabit Baseline", self.suite_1g.test_iop_31_gigabit_baseline),
+                    ("1000BASE-T1", "IOP_16 Link Integrity Frame 0", self.suite_1g.test_iop_16_link_integrity_frame0),
+                    ("1000BASE-T1", "IOP_32 Gigabit Open TDR", self.suite_1g.test_iop_32_gigabit_open_tdr),
+                    ("1000BASE-T1", "IOP_33 Gigabit Short TDR", self.suite_1g.test_iop_33_gigabit_short_tdr),
                 ]
             ))
 
+        # --- MultiGBASE-T1 (3 Tests) ---
         if config.enable_multigbaset1 and self.suite_multig:
             suite_map.append((
                 "MultiGBASE-T1", [

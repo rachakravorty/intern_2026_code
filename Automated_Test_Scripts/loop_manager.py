@@ -41,6 +41,7 @@ class TestStatistics:
             return 0.0
         return (self.passed_cycles / self.current_cycle) * 100
 
+
 class LoopManager:
     """Controls background execution for tests and sends streams to the GUI."""
     def __init__(self, serial_port: str = "COM3"):
@@ -63,12 +64,13 @@ class LoopManager:
         self.on_progress: Optional[Callable[[TestStatistics], None]] = None
         self.on_complete: Optional[Callable[[TestStatistics], None]] = None
 
-    def initialize_hardware(self) -> bool:
-        """Instantiates shared hardware and links callbacks to test benches."""
-        self._log(f"Initializing hardware on {self.serial_port}...")
+    def initialize_hardware(self, mock: bool = True, phy_addr: int = 1) -> bool:
+        """Instantiates shared hardware drivers and links callbacks to test benches."""
+        mode_str = "MOCK" if mock else "HARDWARE"
+        self._log(f"Initializing drivers ({mode_str} mode) on {self.serial_port}...")
         try:
             self.hw = ArduinoDriver(port=self.serial_port)
-            self.mdio = MDIODriver(phy_addr=1, mock=True)
+            self.mdio = MDIODriver(phy_addr=phy_addr, mock=mock)
             
             # Pass shared drivers and GUI result callback to all test suites
             self.suite_10m = TestBench10BASET1S(self.hw, self.mdio, callback=self.on_result)
@@ -177,14 +179,15 @@ class LoopManager:
         finally:
             self._is_running = False
 
+            # Emergency relay reset & port teardown
             if hasattr(self, "hw") and self.hw:
                 try:
+                    self.hw.set_normal()
                     self.hw.close()
                     self._log("Hardware safely reset to normal and serial port closed.")
                 except Exception as close_err:
-                    self._log(f"[WARN] Failed to close serial port: {close_err}")
+                    self._log(f"[WARN] Failed hardware teardown/close: {close_err}")
 
-            # 2. SAFE COMPLETION CALLBACK
             if hasattr(self, "on_complete") and self.on_complete:
                 try:
                     self.on_complete(stats)
